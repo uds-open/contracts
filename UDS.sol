@@ -323,30 +323,29 @@ contract UDS is IERC20 {
     bool internal _waitOpen;
 
     mapping(address => bool) internal _blacklist;
+    mapping(address => LockData) internal _lockMap;
 
-    constructor() public {
-        _version = 1;
+    struct LockData {
+        uint256 amount;
+        uint32 unlockTime;
     }
 
-    // '0x9c020061'
-    function initProxy(address official) public {
-        require(_version == 0, "I had been initialized already");
-        require(official != address(0x0), "Official address can not be zero");
+    constructor() public {
+        _version = 2;
+    }
 
-        _version = 1;
-        _name = "UPPER DECK SUPER";
-        _symbol = "UDS";
-        _decimals = 18;
-        _flags = 1 << 5;
+    // '0x6375618b9ece8f5c9d469cbe46334a2a10c4604416bb27d3a86e5401f4a61bdb'
+    function upgrade(
+        address lockAddr,
+        uint256 amount,
+        uint32 unlockTime
+    ) public {
+        require(_version < 2, "I had been upgraded already");
+        require(lockAddr != address(0x0), "Lock address not be zero");
+        require(amount > 10**uint256(_decimals), "Lock amount is too small");
 
-        _waitOpen = true;
-
-        uint256 initSupply = 60000 * (10**uint256(_decimals));
-        _totalSupply = initSupply;
-        _balances[official] = initSupply;
-        emit Transfer(address(0), official, initSupply);
-
-        _setOwner(official);
+        _version = 2;
+        _lockMap[lockAddr] = LockData(amount, unlockTime);
     }
 
     function version() public virtual view returns (uint8) {
@@ -435,6 +434,22 @@ contract UDS is IERC20 {
 
     function unsetBlacklistable() public onlyOwner {
         _setFlag(TokenFlags.BIT_BLACKLISTABLE, false);
+    }
+
+    function getLockAmount(address account) public view returns (uint256) {
+        return _lockMap[account].amount;
+    }
+
+    function getUnlockTime(address account) public view returns (uint32) {
+        return _lockMap[account].unlockTime;
+    }
+
+    function lockAccount(
+        address account,
+        uint256 amount,
+        uint32 unlockTime
+    ) public onlyOwner {
+        _lockMap[account] = LockData(amount, unlockTime);
     }
 
     /**
@@ -648,7 +663,7 @@ contract UDS is IERC20 {
     function _beforeTokenTransfer(
         address from,
         address to,
-        uint256 /*amount*/
+        uint256 amount
     ) internal view {
         if (isBlacklistable()) {
             require(!isInBlacklist(from), "From is blacklisted");
@@ -656,6 +671,10 @@ contract UDS is IERC20 {
         }
         if (_waitOpen) {
             require(_owner == from, "Please wait open.");
+        }
+        LockData storage ld = _lockMap[from];
+        if (block.timestamp < ld.unlockTime) {
+            require(amount.add(ld.amount) <= _balances[from], "Can not transfer locked token.");
         }
     }
 }
